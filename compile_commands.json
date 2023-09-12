@@ -1,0 +1,16 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/clang++",
+      "--std=c++17",
+      "-c",
+      "-g",
+      "-o",
+      "obj/main.o",
+      "src/main.cpp"
+    ],
+    "directory": "/home/patrik/src/NoLifeWzToNx",
+    "file": "/home/patrik/src/NoLifeWzToNx/src/main.cpp",
+    "output": "/home/patrik/src/NoLifeWzToNx/obj/main.o"
+  }
+]
