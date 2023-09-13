@@ -1,5 +1,5 @@
 ##
-# Project Title
+# wztonx
 #
 # @file
 # @version 0.1
@@ -8,9 +8,10 @@ OUT = ./nlwtn
 CC = clang++
 ODIR = obj
 SDIR = src
-CXXFLAGS := -c -g -O0 --std=c++17 -lsquish -llz4 -lz
+# CXXFLAGS := -c -g -O0 --std=c++17 -lsquish -llz4 -lz
+CXXFLAGS :=
 
-_OBJS = main.o
+_OBJS = main.o File.o Converter.o
 OBJS = $(patsubst %,$(ODIR)/%,$(_OBJS))
 
 $(ODIR)/%.o: $(SDIR)/%.cpp

@@ -24,19 +24,19 @@
 #include <unistd.h>
 #include <vector>
 
-#include "src/wztonx.h"
+#include "Converter.h"
 
 int main(int argc, char* argv[])
 {
-    std::cout << "WzToNx Converter";
+    std::cout << "WzToNx Converter" << std::endl;
     std::cout
-        << "Copyright (C) 2014-2023 Peter Atashian, Ryan Payton, Patrik Rogalski";
-    std::cout << "Licensed under GNU Affero General Public License";
-    std::cout << "Converts WZ files into NX files";
+        << "Copyright (C) 2014-2023 Peter Atashian, Ryan Payton, Patrik Rogalski" << std::endl;
+    std::cout << "Licensed under GNU Affero General Public License" << std::endl;
+    std::cout << "Converts WZ files into NX files" << std::endl;
 
     auto client_flag = false;
     auto server_flag = false;
-    auto high_compression = false;
+    auto high_compression_flag = false;
 
     std::vector<std::filesystem::path> files;
 
@@ -46,7 +46,7 @@ int main(int argc, char* argv[])
             server_flag = true;
             break;
         case 'h':
-            high_compression = true;
+            high_compression_flag = true;
             break;
         default:
         case 'c':
@@ -55,26 +55,21 @@ int main(int argc, char* argv[])
         }
     }
 
-    auto convert_file = [&](std::filesystem::path const& file) {
-        auto extension = file.extension().native();
-        auto converter = nl::converter();
+    for (auto& argument : std::vector<std::string>(argv + 1, argv + argc)) {
+        // this is to skip over the command-line flags
+        if (argument[0] == '-')
+            continue;
+        files.emplace_back(argument);
+    }
+    auto converter = nl::Converter(client_flag, high_compression_flag);
 
-        if (extension == ".img") {
-            converter.convert_imge(file, client_flag, high_compression);
-
-            // nl::imgtonx { file, client_flag, high_compression }.convert_file();
-        } else if (extension == ".wz") {
-            converter.convert_wz(file, client_flag, high_compression);
-
-            // nl::wztonx { file, client_flag, high_compression }.convert_file();
-        }
-    };
     for (auto& path : files) {
         if (!std::filesystem::is_regular_file(path)) {
             std::cerr << "Not a regular file?: " << path;
             exit(1);
         }
-        convert_file(path);
+        std::cout << path << std::endl;
+        converter.convert(path);
     }
 
     return 0;
