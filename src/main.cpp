@@ -29,9 +29,6 @@
 int main(int argc, char* argv[])
 {
     std::cout << "WzToNx Converter" << std::endl;
-    std::cout
-        << "Copyright (C) 2014-2023 Peter Atashian, Ryan Payton, Patrik Rogalski" << std::endl;
-    std::cout << "Licensed under GNU Affero General Public License" << std::endl;
     std::cout << "Converts WZ files into NX files" << std::endl;
 
     auto client_flag = false;
@@ -68,7 +65,7 @@ int main(int argc, char* argv[])
             std::cerr << "Not a regular file?: " << path;
             exit(1);
         }
-        std::cout << path << std::endl;
+        std::cerr << path << std::endl;
         converter.convert(path);
     }
 

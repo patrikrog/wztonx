@@ -36,11 +36,7 @@ public:
 private:
     std::fstream m_file;
     std::filesystem::path m_filename;
-    char const* m_base_address = nullptr;
-    char const* m_address_offset = nullptr;
 
-    // this is not needed?
-    int m_descriptor = 0;
     size_t m_size = 0;
 };
 #endif // FILE_H_
