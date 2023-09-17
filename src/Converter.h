@@ -1,32 +1,46 @@
 #ifndef CONVERTER_H_
 #define CONVERTER_H_
-
-#include "File.h"
 #include <cstdint>
-#include <filesystem>
+#include <cstring>
 #include <iostream>
+#include <string>
 #include <sys/types.h>
 
-namespace nl {
+#include "File.h"
+#include "Utils.h"
+
+#define MAGIC_KEY_LENGTH 65536
+
 class Converter {
-    typedef key_t uint8_t;
+    struct Key {
+        int length = 0;
+        key_t* data = new key_t[MAGIC_KEY_LENGTH];
+
+        void load(uint8_t* input)
+        {
+            std::copy(input, input + MAGIC_KEY_LENGTH, data);
+        }
+    };
 
 public:
-    Converter(bool client_flag, bool high_compression_flag);
+    Converter(Utils::Flags);
     ~Converter();
-
-    void convert(std::filesystem::path);
+    void convert(std::string);
 
 private:
-    void convert_img(std::filesystem::path) { std::cout << "TODO" << std::endl; }
-    void convert_wz(std::filesystem::path);
+    void convert_img(File);
+    void convert_wz(File);
+
+    void load_file(std::string);
 
     bool m_client_flag = false;
     bool m_high_compression_flag = false;
+    bool m_server_flag = false;
 
-    key_t* m_gms_key;
-    key_t* m_kms_key;
+    File* m_file;
+
+    Key m_gms_key = *new Key { MAGIC_KEY_LENGTH };
+    Key m_kms_key = *new Key { MAGIC_KEY_LENGTH };
 };
-} // namespace nl
 
 #endif // CONVERTER_H_

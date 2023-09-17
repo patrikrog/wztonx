@@ -1,23 +1,3 @@
-/*
-  This file is part of the continued NoLifeStory project
-  Copyright (C) 2014-2023  Peter Atashian, Ryan Payton, Patrik Rogalski
-
-
-  This program is free software: you can redistribute it and/or modify
-  it under the terms of the GNU Affero General Public License as published
-  by the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU Affero General Public License for more details.
-
-
-  You should have received a copy of the GNU Affero General Public License
-  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-*/
 #include <filesystem>
 #include <iostream>
 #include <regex>
@@ -25,47 +5,48 @@
 #include <vector>
 
 #include "Converter.h"
+#include "Utils.h"
 
 int main(int argc, char* argv[])
 {
-    std::cout << "WzToNx Converter" << std::endl;
-    std::cout << "Converts WZ files into NX files" << std::endl;
-
-    auto client_flag = false;
-    auto server_flag = false;
-    auto high_compression_flag = false;
+    if (argc < 2) {
+        std::cout << "WzToNx Converter" << std::endl;
+        std::cout << "Converts WZ files into NX files" << std::endl;
+        std::cout << "Usage: " << argv[0] << " [-csh] [input.wz]" << std::endl;
+    }
 
     std::vector<std::filesystem::path> files;
+    Utils::Flags flags;
 
     while (int arguments = getopt(argc, argv, "csh") != -1) {
         switch (arguments) {
         case 's':
-            server_flag = true;
+            flags.server = true;
             break;
         case 'h':
-            high_compression_flag = true;
+            flags.high_compression = true;
             break;
         default:
         case 'c':
-            client_flag = true;
+            flags.client = true;
             break;
         }
     }
 
+    // this is to skip over the command-line flags
     for (auto& argument : std::vector<std::string>(argv + 1, argv + argc)) {
-        // this is to skip over the command-line flags
         if (argument[0] == '-')
             continue;
         files.emplace_back(argument);
     }
-    auto converter = nl::Converter(client_flag, high_compression_flag);
+
+    auto converter = Converter { flags };
 
     for (auto& path : files) {
         if (!std::filesystem::is_regular_file(path)) {
             std::cerr << "Not a regular file?: " << path;
             exit(1);
         }
-        std::cerr << path << std::endl;
         converter.convert(path);
     }
 

@@ -1,4 +1,4 @@
 #!/usr/bin/env sh
 set -x
 
-make clean && make && ./nlwtn Character.wz
+make clean && make && lldb -- ./nlwtn Character.wz

@@ -2,10 +2,13 @@
 #include <filesystem>
 #include <iostream>
 
-File::File(std::filesystem::path filename)
+File::File(std::string filename)
 {
-    m_file.open(filename.c_str(), std::ios::in | std::ios::binary);
-    m_size = std::filesystem::file_size(filename);
+
+    m_file = fopen(filename.c_str(), "r");
+    struct stat st;
+    stat(filename.c_str(), &st);
+    m_size = st.st_size;
 
     std::cerr << m_size << std::endl;
 }

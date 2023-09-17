@@ -1,29 +1,33 @@
-/*
-  This file is part of the continued NoLifeStory project
-  Copyright (C) 2014-2023  Peter Atashian, Ryan Payton, Patrik Rogalski
+//////////////////////////////////////////////////////////////////////////////////
+//	This file is part of the continued NoLifeStory project						//
+//	Copyright (C) 2014-2020  Peter Atashian, Ryan Payton						//
+//																				//
+//	This program is free software: you can redistribute it and/or modify		//
+//	it under the terms of the GNU Affero General Public License as published by	//
+//	the Free Software Foundation, either version 3 of the License, or			//
+//	(at your option) any later version.											//
+//																				//
+//	This program is distributed in the hope that it will be useful,				//
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of				//
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the				//
+//	GNU Affero General Public License for more details.							//
+//																				//
+//	You should have received a copy of the GNU Affero General Public License	//
+//	along with this program.  If not, see <https://www.gnu.org/licenses/>.		//
+//////////////////////////////////////////////////////////////////////////////////
 
-
-  This program is free software: you can redistribute it and/or modify
-  it under the terms of the GNU Affero General Public License as published
-  by the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU Affero General Public License for more details.
-
-
-  You should have received a copy of the GNU Affero General Public License
-  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-*/
-
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define VC_EXTRALEAN
+#define NOMINMAX
+#include <Windows.h>
+#else
 #include <sys/fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include <lz4.h>
 #include <lz4hc.h>
@@ -33,23 +37,46 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#ifndef NL_NO_CODECVT
 #include <codecvt>
+#endif
 #include <cstdint>
 #include <cstring>
+#ifndef NL_NO_STD_FILESYSTEM
 #include <filesystem>
+namespace sys = std::experimental::filesystem;
+#else
+#include <boost/filesystem.hpp>
+namespace sys = boost::filesystem;
+#endif
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <locale>
 #include <map>
 #include <numeric>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-namespace nl {
+namespace {
+std::string u8string(const sys::path& path)
+{
+#ifndef NL_NO_STD_FILESYSTEM
+    return path.u8string();
+#else
+    return path.native();
+#endif
+}
+}
 
+using namespace std::string_literals;
+using namespace std::chrono_literals;
+
+namespace nl {
 // Some typedefs
 typedef char char8_t;
 typedef uint32_t id_t;
@@ -57,70 +84,55 @@ typedef uint8_t key_t;
 typedef int32_t int_t;
 // The keys
 // TODO - Use AES to generate these keys at runtime
+extern key_t key_bms[65536];
 extern key_t key_gms[65536];
 extern key_t key_kms[65536];
-key_t const* keys[2] = { key_gms, key_kms };
-
+key_t const* keys[3] = { key_bms, key_gms, key_kms };
 // Tables for color lookups
-uint8_t const color_lookup_tables[3][72] = {
-    // table4
-    { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
-        0xCC, 0xDD, 0xEE, 0xFF },
-    // table5
-    { 0x00, 0x08, 0x10, 0x19, 0x21, 0x29, 0x31, 0x3A, 0x42, 0x4A, 0x52,
-        0x5A, 0x63, 0x6B, 0x73, 0x7B, 0x84, 0x8C, 0x94, 0x9C, 0xA5, 0xAD,
-        0xB5, 0xBD, 0xC5, 0xCE, 0xD6, 0xDE, 0xE6, 0xEF, 0xF7, 0xFF },
-    // table6
-    { 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28,
-        0x2D, 0x31, 0x35, 0x39, 0x3D, 0x41, 0x45, 0x49, 0x4D, 0x51, 0x55,
-        0x59, 0x5D, 0x61, 0x65, 0x69, 0x6D, 0x71, 0x75, 0x79, 0x7D, 0x82,
-        0x86, 0x8A, 0x8E, 0x92, 0x96, 0x9A, 0x9E, 0xA2, 0xA6, 0xAA, 0xAE,
-        0xB2, 0xB6, 0xBA, 0xBE, 0xC2, 0xC6, 0xCA, 0xCE, 0xD2, 0xD7, 0xDB,
-        0xDF, 0xE3, 0xE7, 0xEB, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF }
+uint8_t const table4[0x10] = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+uint8_t const table5[0x20] = { 0x00, 0x08, 0x10, 0x19, 0x21, 0x29, 0x31, 0x3A, 0x42, 0x4A, 0x52,
+    0x5A, 0x63, 0x6B, 0x73, 0x7B, 0x84, 0x8C, 0x94, 0x9C, 0xA5, 0xAD,
+    0xB5, 0xBD, 0xC5, 0xCE, 0xD6, 0xDE, 0xE6, 0xEF, 0xF7, 0xFF };
+uint8_t const table6[0x40] = {
+    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2D, 0x31, 0x35, 0x39, 0x3D,
+    0x41, 0x45, 0x49, 0x4D, 0x51, 0x55, 0x59, 0x5D, 0x61, 0x65, 0x69, 0x6D, 0x71, 0x75, 0x79, 0x7D,
+    0x82, 0x86, 0x8A, 0x8E, 0x92, 0x96, 0x9A, 0x9E, 0xA2, 0xA6, 0xAA, 0xAE, 0xB2, 0xB6, 0xBA, 0xBE,
+    0xC2, 0xC6, 0xCA, 0xCE, 0xD2, 0xD7, 0xDB, 0xDF, 0xE3, 0xE7, 0xEB, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF
 };
-
 // cp1252 table
 char16_t const cp1252[0x100] = {
-    0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008,
-    0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F, 0x0010, 0x0011,
-    0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x001A,
-    0x001B, 0x001C, 0x001D, 0x001E, 0x001F, 0x0020, 0x0021, 0x0022, 0x0023,
-    0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002A, 0x002B, 0x002C,
-    0x002D, 0x002E, 0x002F, 0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035,
-    0x0036, 0x0037, 0x0038, 0x0039, 0x003A, 0x003B, 0x003C, 0x003D, 0x003E,
-    0x003F, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
-    0x0048, 0x0049, 0x004A, 0x004B, 0x004C, 0x004D, 0x004E, 0x004F, 0x0050,
-    0x0051, 0x0052, 0x0053, 0x0054, 0x0055, 0x0056, 0x0057, 0x0058, 0x0059,
-    0x005A, 0x005B, 0x005C, 0x005D, 0x005E, 0x005F, 0x0060, 0x0061, 0x0062,
-    0x0063, 0x0064, 0x0065, 0x0066, 0x0067, 0x0068, 0x0069, 0x006A, 0x006B,
-    0x006C, 0x006D, 0x006E, 0x006F, 0x0070, 0x0071, 0x0072, 0x0073, 0x0074,
-    0x0075, 0x0076, 0x0077, 0x0078, 0x0079, 0x007A, 0x007B, 0x007C, 0x007D,
-    0x007E, 0x007F, 0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020,
-    0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
-    0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC,
-    0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0x017E, 0x0178, 0x00A0, 0x00A1,
-    0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, 0x00A8, 0x00A9, 0x00AA,
-    0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, 0x00B0, 0x00B1, 0x00B2, 0x00B3,
-    0x00B4, 0x00B5, 0x00B6, 0x00B7, 0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC,
-    0x00BD, 0x00BE, 0x00BF, 0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5,
-    0x00C6, 0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE,
-    0x00CF, 0x00D0, 0x00D1, 0x00D2, 0x00D3, 0x00D4, 0x00D5, 0x00D6, 0x00D7,
-    0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x00DD, 0x00DE, 0x00DF, 0x00E0,
-    0x00E1, 0x00E2, 0x00E3, 0x00E4, 0x00E5, 0x00E6, 0x00E7, 0x00E8, 0x00E9,
-    0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, 0x00F0, 0x00F1, 0x00F2,
-    0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, 0x00F8, 0x00F9, 0x00FA, 0x00FB,
+    0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000A, 0x000B,
+    0x000C, 0x000D, 0x000E, 0x000F, 0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017,
+    0x0018, 0x0019, 0x001A, 0x001B, 0x001C, 0x001D, 0x001E, 0x001F, 0x0020, 0x0021, 0x0022, 0x0023,
+    0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002A, 0x002B, 0x002C, 0x002D, 0x002E, 0x002F,
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039, 0x003A, 0x003B,
+    0x003C, 0x003D, 0x003E, 0x003F, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
+    0x0048, 0x0049, 0x004A, 0x004B, 0x004C, 0x004D, 0x004E, 0x004F, 0x0050, 0x0051, 0x0052, 0x0053,
+    0x0054, 0x0055, 0x0056, 0x0057, 0x0058, 0x0059, 0x005A, 0x005B, 0x005C, 0x005D, 0x005E, 0x005F,
+    0x0060, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067, 0x0068, 0x0069, 0x006A, 0x006B,
+    0x006C, 0x006D, 0x006E, 0x006F, 0x0070, 0x0071, 0x0072, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077,
+    0x0078, 0x0079, 0x007A, 0x007B, 0x007C, 0x007D, 0x007E, 0x007F, 0x20AC, 0xFFFD, 0x201A, 0x0192,
+    0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
+    0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A,
+    0x0153, 0xFFFD, 0x017E, 0x0178, 0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7,
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, 0x00B0, 0x00B1, 0x00B2, 0x00B3,
+    0x00B4, 0x00B5, 0x00B6, 0x00B7, 0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+    0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB,
+    0x00CC, 0x00CD, 0x00CE, 0x00CF, 0x00D0, 0x00D1, 0x00D2, 0x00D3, 0x00D4, 0x00D5, 0x00D6, 0x00D7,
+    0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x00DD, 0x00DE, 0x00DF, 0x00E0, 0x00E1, 0x00E2, 0x00E3,
+    0x00E4, 0x00E5, 0x00E6, 0x00E7, 0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF,
+    0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, 0x00F8, 0x00F9, 0x00FA, 0x00FB,
     0x00FC, 0x00FD, 0x00FE, 0x00FF
 };
-// Identity operation because C++ doesn't have such a template. Surprising, I
-// know.
+// Identity operation because C++ doesn't have such a template. Surprising, I know.
 template <typename T>
 struct identity {
     T const& operator()(T const& v) const { return v; }
 };
 
 template <int N>
-void scale(std::vector<uint8_t> const& input, std::vector<uint8_t>& output,
-    int width, int height)
+void scale(std::vector<uint8_t> const& input, std::vector<uint8_t>& output, int width, int height)
 {
     auto in = reinterpret_cast<uint32_t const*>(input.data());
     auto out = reinterpret_cast<uint32_t*>(output.data());
@@ -137,11 +149,34 @@ void scale(std::vector<uint8_t> const& input, std::vector<uint8_t>& output,
         }
     }
 }
-
 // Input memory mapped file
 struct imapfile {
     char const* base = nullptr;
     char const* offset = nullptr;
+#ifdef _WIN32
+    void* file_handle = nullptr;
+    void* map_handle = nullptr;
+    void open(std::string p)
+    {
+        file_handle = CreateFileA(p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+        if (file_handle == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("Failed to open file " + p);
+        map_handle = CreateFileMappingA(file_handle, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        if (map_handle == nullptr)
+            throw std::runtime_error("Failed to create file mapping of file " + p);
+        base = reinterpret_cast<char*>(MapViewOfFile(map_handle, FILE_MAP_READ, 0, 0, 0));
+        if (base == nullptr)
+            throw std::runtime_error("Failed to map view of file " + p);
+        offset = base;
+    }
+    ~imapfile()
+    {
+        UnmapViewOfFile(base);
+        CloseHandle(map_handle);
+        CloseHandle(file_handle);
+    }
+#else
     int file_handle = 0;
     size_t file_size = 0;
     void open(std::string p)
@@ -164,7 +199,11 @@ struct imapfile {
         munmap(const_cast<char*>(base), file_size);
         close(file_handle);
     }
-    size_t tell() { return static_cast<size_t>(offset - base); }
+#endif
+    size_t tell()
+    {
+        return static_cast<size_t>(offset - base);
+    }
     void seek(size_t n) { offset = base + n; }
     void skip(size_t n) { offset += n; }
     template <typename T>
@@ -184,12 +223,38 @@ struct imapfile {
 struct omapfile {
     char* base = nullptr;
     char* offset = nullptr;
+#ifdef _WIN32
+    void* file_handle = nullptr;
+    void* map_handle = nullptr;
+    void open(std::string p, size_t size)
+    {
+        file_handle
+            = ::CreateFileA(p.c_str(), GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (file_handle == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("Failed to open file " + p);
+        map_handle = ::CreateFileMappingA(file_handle, nullptr, PAGE_READWRITE, size >> 32,
+            size & 0xffffffff, nullptr);
+        if (map_handle == nullptr)
+            throw std::runtime_error("Failed to create file mapping of file " + p);
+        base = reinterpret_cast<char*>(::MapViewOfFile(map_handle, FILE_MAP_ALL_ACCESS, 0, 0, 0));
+        if (base == nullptr)
+            throw std::runtime_error("Failed to map view of file " + p);
+        offset = base;
+    }
+    ~omapfile()
+    {
+        ::UnmapViewOfFile(base);
+        ::CloseHandle(map_handle);
+        ::CloseHandle(file_handle);
+    }
+#else
     int file_handle = 0;
     size_t file_size = 0;
     void open(std::string p, uint64_t size)
     {
-        file_handle = ::open(p.c_str(), O_RDWR | O_CREAT | O_TRUNC,
-            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+        file_handle
+            = ::open(p.c_str(), O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         if (file_handle == -1)
             throw std::runtime_error("Failed to open file " + p);
         file_size = size;
@@ -197,9 +262,8 @@ struct omapfile {
             throw std::runtime_error("Error calling lseek() to 'stretch' file " + p);
         if (::write(file_handle, "", 1) != 1)
             throw std::runtime_error("Error writing last byte of file " + p);
-        base = reinterpret_cast<char*>(::mmap(nullptr, file_size,
-            PROT_READ | PROT_WRITE, MAP_SHARED,
-            file_handle, 0));
+        base = reinterpret_cast<char*>(
+            ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE, MAP_SHARED, file_handle, 0));
         if (reinterpret_cast<intptr_t>(base) == -1)
             throw std::runtime_error("Failed to create memory mapping of file " + p);
         offset = base;
@@ -209,7 +273,11 @@ struct omapfile {
         ::munmap(const_cast<char*>(base), file_size);
         ::close(file_handle);
     }
-    size_t tell() { return static_cast<size_t>(offset - base); }
+#endif
+    size_t tell()
+    {
+        return static_cast<size_t>(offset - base);
+    }
     void seek(size_t n) { offset = base + n; }
     void skip(size_t n) { offset += n; }
     template <typename T>
@@ -269,7 +337,6 @@ struct bitmap {
 // The main class itself
 struct wztonx {
     // Variables
-    File file;
     imapfile in;
     omapfile out;
     std::vector<node> nodes = std::vector<node> { { node {} } };
@@ -278,7 +345,9 @@ struct wztonx {
     std::vector<std::string> strings;
     std::string str_buf;
     std::u16string wstr_buf;
+#ifndef NL_NO_CODECVT
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convert;
+#endif
     char8_t const* u8key = nullptr;
     char16_t const* u16key = nullptr;
     std::vector<std::pair<id_t, int32_t>> imgs;
@@ -296,11 +365,16 @@ struct wztonx {
     // Methods
     std::string convert_str(std::u16string const& p_str)
     {
-
+#ifndef NL_NO_CODECVT
         auto ptr = reinterpret_cast<wchar_t const*>(p_str.c_str());
         return convert.to_bytes(ptr, ptr + p_str.size());
+#else
+        std::array<char, 0x10000> buf;
+        std::wstring wbuf { p_str.cbegin(), p_str.cend() };
+        auto size = std::wcstombs(buf.data(), wbuf.data(), buf.size());
+        return { buf.data(), size };
+#endif
     }
-
     id_t add_string(std::string str)
     {
         uint32_t hash = 2166136261u;
@@ -348,11 +422,9 @@ struct wztonx {
                 str_buf[i] = static_cast<char8_t>(os[i] ^ mask);
                 ++mask;
             }
-            if (std::any_of(str_buf.begin(), str_buf.end(), [](char const& c) {
-                    return static_cast<uint8_t>(c) >= 0x80;
-                })) {
-                std::transform(
-                    str_buf.cbegin(), str_buf.cend(), std::back_inserter(wstr_buf),
+            if (std::any_of(str_buf.begin(), str_buf.end(),
+                    [](char const& c) { return static_cast<uint8_t>(c) >= 0x80; })) {
+                std::transform(str_buf.cbegin(), str_buf.cend(), std::back_inserter(wstr_buf),
                     [](char c) { return cp1252[static_cast<unsigned char>(c)]; });
                 return add_string(convert_str(wstr_buf));
             }
@@ -455,10 +527,9 @@ struct wztonx {
         auto& n = nodes[parent_node];
         auto first = nodes.begin() + n.children;
         auto last = first + n.num;
-        auto it = std::lower_bound(first, last, str,
-            [this](node const& n, std::string const& s) {
-                return strings[n.name] < s;
-            });
+        auto it = std::lower_bound(first, last, str, [this](node const& n, std::string const& s) {
+            return strings[n.name] < s;
+        });
         if (it == last)
             return 0;
         if (strings[it->name] != str)
@@ -470,10 +541,9 @@ struct wztonx {
         auto& n = nodes[parent_node];
         auto first = nodes.begin() + n.children;
         auto last = first + n.num;
-        auto it = std::lower_bound(first, last, str,
-            [this](node const& n, std::string const& s) {
-                return strings[n.name] < s;
-            });
+        auto it = std::lower_bound(first, last, str, [this](node const& n, std::string const& s) {
+            return strings[n.name] < s;
+        });
         if (it == last)
             return 0;
         if (strings[it->name] != str)
@@ -593,19 +663,16 @@ struct wztonx {
         auto& n = nodes[uol.back()];
         if (n.data_type == node::type::uol) {
             // std::cerr << " = \"" << strings[n.data.string] << "\"" << std::endl;
-            //  If we failed to resolve any uols, just turn them into useless empty
-            //  nodes
+            //  If we failed to resolve any uols, just turn them into useless empty nodes
             n.data_type = node::type::none;
         } else {
-            std::cerr << " claims to be an invalid UOL but isn't a UOL???"
-                      << std::endl;
+            std::cerr << " claims to be an invalid UOL but isn't a UOL???" << std::endl;
         }
     }
     void source_fail(std::vector<id_t>& link, std::string const& str)
     {
         auto& n = nodes[link.back()];
-        std::cerr << "Failed to find " << str << " for [" << strings[n.data.string]
-                  << "]." << std::endl;
+        std::cerr << "Failed to find " << str << " for [" << strings[n.data.string] << "]." << std::endl;
     }
     void directory(id_t dir_node)
     {
@@ -712,11 +779,6 @@ struct wztonx {
     }
     void sub_property(id_t prop_node, size_t p_offset)
     {
-        /*
-         * TODO: terminate called after throwing an instance of 'std::range_error'
-         *         what():  wstring_convert::to_bytes
-         *       Aborted
-         */
         auto& n = nodes[prop_node];
         auto count = static_cast<id_t>(in.read_cint());
         auto ni = static_cast<id_t>(nodes.size());
@@ -730,8 +792,7 @@ struct wztonx {
             uint8_t num;
             size_t p;
             switch (type) {
-            case 0x00: // Turning null nodes into integers with an id. Useful for
-                       // zmap.img
+            case 0x00: // Turning null nodes into integers with an id. Useful for zmap.img
                 nn.data_type = node::type::integer;
                 nn.data.integer = i;
                 break;
@@ -796,7 +857,6 @@ struct wztonx {
             in.seek(p);
             extended_property(img_node, p);
         }
-        std::cerr << "in.seek();" << std::endl;
         in.seek(p + size);
     }
     void lua_script(id_t script_node)
@@ -819,10 +879,8 @@ struct wztonx {
     virtual void parse_file()
     {
         std::cerr << "Working on " << wzfilename << std::endl;
-        std::cout << "Parsing input......." << std::endl;
-        m_file = File::File(m_wzfilename);
-        // in.open(wzfilename);
-
+        std::cout << "Parsing input.......";
+        in.open(wzfilename);
         auto magic = in.read<uint32_t>();
         if (magic != 0x31474B50)
             throw std::runtime_error("Not a valid WZ file");
@@ -849,9 +907,9 @@ struct wztonx {
         // uol
         find_uols(0);
         for (;;) {
-            auto it = std::remove_if(
-                uols.begin(), uols.end(),
-                [this](std::vector<id_t> const& v) { return resolve_uol(v); });
+            auto it = std::remove_if(uols.begin(), uols.end(), [this](std::vector<id_t> const& v) {
+                return resolve_uol(v);
+            });
             auto diff = uols.end() - it;
             uols.erase(it, uols.end());
             if (diff == 0)
@@ -864,9 +922,9 @@ struct wztonx {
         std::cout << "Parsing source......";
         find_links(0, "source");
         for (;;) {
-            auto it = std::remove_if(
-                links.begin(), links.end(),
-                [this](std::vector<id_t> const& v) { return resolve_source(v); });
+            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const& v) {
+                return resolve_source(v);
+            });
             auto diff = links.end() - it;
             links.erase(it, links.end());
             if (diff == 0)
@@ -880,9 +938,9 @@ struct wztonx {
         std::cout << "Parsing _outlink....";
         find_links(0, "_outlink");
         for (;;) {
-            auto it = std::remove_if(
-                links.begin(), links.end(),
-                [this](std::vector<id_t> const& v) { return resolve_outlink(v); });
+            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const& v) {
+                return resolve_outlink(v);
+            });
             auto diff = links.end() - it;
             links.erase(it, links.end());
             if (diff == 0)
@@ -896,9 +954,9 @@ struct wztonx {
         std::cout << "Parsing _inlink.....";
         find_links(0, "_inlink");
         for (;;) {
-            auto it = std::remove_if(
-                links.begin(), links.end(),
-                [this](std::vector<id_t> const& v) { return resolve_inlink(v); });
+            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const& v) {
+                return resolve_inlink(v);
+            });
             auto diff = links.end() - it;
             links.erase(it, links.end());
             if (diff == 0)
@@ -938,8 +996,7 @@ struct wztonx {
         }
         audio_offset = offset;
         if (client) {
-            offset += std::accumulate(
-                audios.begin(), audios.end(), 0ull,
+            offset += std::accumulate(audios.begin(), audios.end(), 0ull,
                 [](size_t n, audio const& a) { return n + a.length; });
             offset += 0x10 - (offset & 0xf);
         }
@@ -1024,18 +1081,15 @@ struct wztonx {
             auto width = in.read_cint();
             auto height = in.read_cint();
             if (width < 0 || height < 0) {
-                std::cerr << "Invalid image size: " << std::dec << width << ", "
-                          << height << std::endl;
+                std::cerr << "Invalid image size: " << std::dec << width << ", " << height << std::endl;
                 throw std::runtime_error { "fak" };
             }
             auto f1 = in.read_cint();
-            auto f2 = static_cast<unsigned>(
-                in.read<uint8_t>()); // Cast away from char to preserve sanity
+            auto f2 = static_cast<unsigned>(in.read<uint8_t>()); // Cast away from char to preserve sanity
             auto n1 = in.read<uint32_t>();
             if (n1) {
                 std::cerr << "non-zero n1: "
-                          << "0x" << std::setfill('0') << std::setw(8) << std::hex
-                          << n1;
+                          << "0x" << std::setfill('0') << std::setw(8) << std::hex << n1;
                 throw std::runtime_error { "fak" };
             }
             auto length = in.read<uint32_t>();
@@ -1088,10 +1142,10 @@ struct wztonx {
             };
             std::copy(original, original + length, input.begin());
             if (!decompress() && (!decrypt() || !decompress())) {
-                std::cerr << "Unable to inflate: 0x" << std::setfill('0')
-                          << std::setw(2) << std::hex << (unsigned)original[0] << " 0x"
-                          << std::setfill('0') << std::setw(2) << std::hex
-                          << static_cast<unsigned>(original[1]) << std::endl;
+                std::cerr << "Unable to inflate: 0x" << std::setfill('0') << std::setw(2)
+                          << std::hex << (unsigned)original[0] << " 0x" << std::setfill('0')
+                          << std::setw(2) << std::hex << static_cast<unsigned>(original[1])
+                          << std::endl;
                 // Just fill the image with blank data so nothing breaks
                 f1 = 2;
                 f2 = 0;
@@ -1154,23 +1208,18 @@ struct wztonx {
                 pixels /= 256;
                 break;
             default:
-                std::cerr << "Unknown image format2 of" << std::dec
-                          << static_cast<unsigned>(f2) << std::endl;
+                std::cerr << "Unknown image format2 of" << std::dec << static_cast<unsigned>(f2) << std::endl;
                 throw std::runtime_error("Unknown image type!");
             }
             if (check != pixels * 4) {
-                std::cerr << "Size mismatch: " << std::dec << width << "," << height
-                          << "," << decompressed << "," << f1 << "," << f2 << std::endl;
+                std::cerr << "Size mismatch: " << std::dec << width << "," << height << "," << decompressed << "," << f1 << "," << f2 << std::endl;
                 throw std::runtime_error("halp!");
             }
             switch (f1) {
             case 1:
                 for (auto i = 0; i < pixels; ++i) {
-                    auto pixel = pixels4444[i];
-                    // pre-select table4
-                    auto lookup_table = color_lookup_tables[0];
-                    pixelsout[i] = { lookup_table[pixel.b], lookup_table[pixel.g],
-                        lookup_table[pixel.r], lookup_table[pixel.a] };
+                    auto p = pixels4444[i];
+                    pixelsout[i] = { table4[p.b], table4[p.g], table4[p.r], table4[p.a] };
                 }
                 input.swap(output);
                 break;
@@ -1179,22 +1228,17 @@ struct wztonx {
                 break;
             case 513:
                 for (auto i = 0; i < pixels; ++i) {
-                    auto pixel = pixels565[i];
-
-                    pixelsout[i] = { color_lookup_tables[1][pixel.b],
-                        color_lookup_tables[2][pixel.g],
-                        color_lookup_tables[1][pixel.r], 255 };
+                    auto p = pixels565[i];
+                    pixelsout[i] = { table5[p.b], table6[p.g], table5[p.r], 255 };
                 }
                 input.swap(output);
                 break;
             case 1026:
-                squish::DecompressImage(output.data(), width, height, input.data(),
-                    squish::kDxt3);
+                squish::DecompressImage(output.data(), width, height, input.data(), squish::kDxt3);
                 input.swap(output);
                 break;
             case 2050:
-                squish::DecompressImage(output.data(), width, height, input.data(),
-                    squish::kDxt5);
+                squish::DecompressImage(output.data(), width, height, input.data(), squish::kDxt5);
                 input.swap(output);
                 break;
             }
@@ -1212,14 +1256,12 @@ struct wztonx {
             uint32_t final_size;
             if (hc) {
                 final_size = static_cast<uint32_t>(
-                    LZ4_compress_HC(reinterpret_cast<char const*>(input.data()),
-                        reinterpret_cast<char*>(output.data()), size,
-                        LZ4_compressBound(size), 0));
+                    LZ4_compressHC(reinterpret_cast<char const*>(input.data()),
+                        reinterpret_cast<char*>(output.data()), size));
             } else {
                 final_size = static_cast<uint32_t>(
-                    LZ4_compress_default(reinterpret_cast<char const*>(input.data()),
-                        reinterpret_cast<char*>(output.data()), size,
-                        LZ4_compressBound(size)));
+                    LZ4_compress(reinterpret_cast<char const*>(input.data()),
+                        reinterpret_cast<char*>(output.data()), size));
             }
             bitmap_offset += final_size + 4;
             file.write(reinterpret_cast<char const*>(&final_size), 4);
@@ -1227,12 +1269,12 @@ struct wztonx {
         }
         std::cout << "Done!" << std::endl;
     }
-    wztonx(std::filesystem::path filename, bool client, bool hc)
+    wztonx(sys::path filename, bool client, bool hc)
         : client(client)
         , hc(hc)
     {
-        wzfilename = filename.native();
-        nxfilename = filename.replace_extension(".nx").native();
+        wzfilename = u8string(filename);
+        nxfilename = u8string(filename.replace_extension(".nx"));
         if (!std::ifstream { wzfilename }.is_open()) {
             return;
         }
@@ -1251,7 +1293,7 @@ struct wztonx {
     }
 };
 struct imgtonx : wztonx {
-    imgtonx(std::filesystem::path filename, bool client, bool hc)
+    imgtonx(sys::path filename, bool client, bool hc)
         : wztonx { filename, client, hc }
     {
     }
@@ -1264,4 +1306,64 @@ struct imgtonx : wztonx {
         finish_parse();
     }
 };
-} // namespace nl
+}
+int main(int argc, char** argv)
+{
+    auto old = std::cerr.rdbuf();
+    auto log = std::ofstream { "NoLifeWzToNx.log" };
+    std::cerr.rdbuf(log.rdbuf());
+    auto a = std::chrono::high_resolution_clock::now();
+#ifdef NL_NO_CODECVT
+    std::setlocale(LC_ALL, "en_US.utf8");
+#endif
+    std::cout << R"(WzToNx Converter
+Copyright (C) 2014-2020 Peter Atashian, Ryan Payton
+Licensed under GNU Affero General Public License
+Converts WZ files into NX files
+)";
+    std::vector<std::string> args { argv + 1, argv + argc };
+    enum { client,
+        server,
+        none } type { none };
+    bool hc { false };
+    std::vector<sys::path> paths;
+    std::regex reg1 { "--([a-z]+)" };
+    std::regex reg2 { "-([a-z]+)" };
+    for (auto& arg : args) {
+        if (arg[0] != '-') {
+            paths.emplace_back(arg);
+            continue;
+        }
+        for (auto& c : arg) {
+            c = std::tolower(c, std::locale::classic());
+        }
+        if (arg == "--client" || arg == "-c") {
+            type = client;
+        } else if (arg == "--server" || arg == "-s") {
+            type = server;
+        } else if (arg == "--lz4hc" || arg == "-h") {
+            hc = true;
+        }
+    }
+    auto convert = [&](sys::path const& p) {
+        if (u8string(p.extension()) == ".img") {
+            nl::imgtonx { p, type == client, hc }.convert_file();
+        } else if (u8string(p.extension()) == ".wz") {
+            nl::wztonx { p, type == client, hc }.convert_file();
+        }
+    };
+    for (auto& p : paths) {
+        if (sys::is_regular_file(p)) {
+            convert(p);
+        } else if (sys::is_directory(p)) {
+            for (sys::recursive_directory_iterator it { p }, end {}; it != end; ++it) {
+                convert(*it);
+            }
+        }
+    }
+    auto b = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " << std::dec
+              << std::chrono::duration_cast<std::chrono::seconds>(b - a).count() << " seconds"
+              << std::endl;
+    std::cerr.rdbuf(old);
+}
